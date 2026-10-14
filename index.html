@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#07080c" />
+<title>StickerForge — Bulk WEBP Converter</title>
+<style>
+:root{--bg:#07080c;--panel:rgba(20,24,34,.7);--brd:rgba(255,255,255,.08);--card:rgba(255,255,255,.04);
+  --accent:#25d366;--text:#eef2f8;--sub:#8b94a5;--danger:#ff4d5e}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{min-height:100dvh;background:var(--bg) radial-gradient(60% 38% at 10% -5%,rgba(37,211,102,.12),transparent 62%) fixed;
+  color:var(--text);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  display:flex;justify-content:center;padding:16px 14px calc(20px + env(safe-area-inset-bottom))}
+.app{width:100%;max-width:520px;display:flex;flex-direction:column;gap:14px}
+.glass{background:var(--panel);border:1px solid var(--brd);border-radius:16px;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
+h1{font-size:1.15rem;font-weight:800}
+.sub,.hint{font-size:.72rem;color:var(--sub)}
+.alert{padding:.7rem .9rem;border-radius:12px;font-size:.8rem;background:rgba(255,77,94,.11);border:1px solid rgba(255,77,94,.45);color:#ff8b96}
+[hidden]{display:none!important}
+
+.drop{padding:30px 18px;text-align:center;cursor:pointer;border:2px dashed rgba(255,255,255,.13);border-radius:16px;background:var(--panel);transition:.2s}
+.drop:hover,.drop.over{border-color:var(--accent);background:rgba(37,211,102,.07)}
+.drop b{display:block;font-size:.92rem}
+.drop input{display:none}
+
+.queue{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:10px}
+.item{position:relative;aspect-ratio:1;border-radius:12px;overflow:hidden;background:var(--card);border:1px solid var(--brd);display:grid;place-items:center}
+.item img{width:100%;height:100%;object-fit:cover}
+.item .ph{font-size:.6rem;color:var(--sub);padding:6px;text-align:center;word-break:break-all}
+.item .st{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:6px;background:rgba(8,10,16,.82);font-size:.62rem;color:var(--accent)}
+.item .st.err{color:var(--danger)}
+.item .badge{position:absolute;bottom:4px;right:4px;padding:2px 5px;border-radius:5px;font:.58rem ui-monospace,Menlo,monospace;background:rgba(0,0,0,.72);color:var(--accent)}
+.item .x{position:absolute;top:4px;right:4px;width:20px;height:20px;border:0;border-radius:50%;background:rgba(0,0,0,.65);color:#fff;font-size:11px;cursor:pointer}
+
+.panel{padding:16px;display:flex;flex-direction:column;gap:12px}
+.field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.field label{font-size:.74rem;color:var(--sub);font-weight:600}
+input[type=text]{width:100%;padding:.62rem .7rem;border-radius:10px;font:inherit;font-size:.85rem;background:rgba(0,0,0,.34);border:1px solid var(--brd);color:var(--text);outline:none}
+input:focus{border-color:var(--accent)}
+.bar{height:6px;border-radius:6px;background:rgba(255,255,255,.12);overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .15s}
+
+.actions{display:flex;gap:10px;padding:10px;position:sticky;bottom:10px}
+.btn{flex:1;padding:.82rem 1rem;border-radius:12px;font-family:inherit;font-weight:700;font-size:.86rem;cursor:pointer;background:rgba(255,255,255,.06);border:1px solid var(--brd);color:var(--text)}
+.btn:disabled{opacity:.34;cursor:not-allowed}
+.btn.go{background:linear-gradient(135deg,#3ae87a,#17a34a);border:0;color:#04140a}
+</style>
+</head>
+<body>
+<div class="app">
+  <header><h1>✦ StickerForge</h1><p class="sub">Bulk image → 512×512 square WEBP · 100% on-device</p></header>
+  <div class="alert" id="alert" hidden></div>
+
+  <label class="drop" id="drop">
+    <b>Drop up to 30 images</b>
+    <span class="sub">JPG · PNG · WEBP · AVIF · BMP — or tap to browse</span>
+    <input type="file" id="file" multiple accept="image/*" />
+  </label>
+
+  <div class="sub" id="summary" hidden></div>
+  <section class="queue" id="queue"></section>
+
+  <section class="panel glass">
+    <div class="field">
+      <label for="zipName">ZIP file name</label>
+      <input type="text" id="zipName" maxlength="40" value="webp_images" />
+    </div>
+    <p class="hint">
+      Every image becomes a <b>512×512</b> WEBP — scaled to <b>fill the entire square</b>, with the overflow cropped from the centre. No padding, no borders.
+    </p>
+    <div class="bar" id="bar" hidden><i></i></div>
+  </section>
+
+  <div class="actions glass">
+    <button class="btn" id="clear" disabled>Clear</button>
+    <button class="btn go" id="zip" disabled>Download ZIP</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+/* ================================================================
+   StickerForge — every image → 512×512 square WEBP, cover-cropped.
+
+   Blocks: 1. CONFIG  2. convertStill()  3. buildZip()  4. Platform.save()
+   Only Platform.save() needs replacing in a native shell.
+   ================================================================ */
+(() => {
+'use strict';
+
+/* ------------------------------------------------------------------ 1. CONFIG */
+const MAX_FILES   = 30;
+const THUMB       = 160;
+const OUTPUT_SIZE = 512;          // every output is exactly this × this
+const QUALITY     = 1;            // 100 — best possible WEBP output
+
+/* ------------------------------------------------------------------ 4. PLATFORM
+   Swap this one function for Android (Capacitor):
+   Filesystem.writeFile + Share.share                                        */
+const Platform = {
+  save(blob, name) {
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: name });
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  }
+};
+
+/* ------------------------------------------------------------------ helpers */
+const $ = (s) => document.querySelector(s);
+const fmt = (b) => b >= 1048576 ? (b / 1048576).toFixed(2) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB';
+const tick = () => new Promise((r) => setTimeout(r, 0));
+const baseName = (n) => n.replace(/\.[^.]+$/, '');
+const safe = (s) => (s || '').replace(/[\\/:*?"<>|]+/g, '_').trim();
+const toBlob = (c, type, q) => new Promise((r) => c.toBlob(r, type, q));
+
+function loadImage(file) {
+  return new Promise((ok, fail) => {
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); ok(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); fail(new Error('decode failed')); };
+    img.src = url;
+  });
+}
+
+/* THE rule: an S×S square filled edge-to-edge.
+   k = max(...) grows the image until it covers the whole square;
+   the overflow on the longer axis is cropped equally from both
+   ends (centred). No transparent padding, no letterboxing. */
+function squareCanvas(src, w, h, size) {
+  const S = size || OUTPUT_SIZE;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d');
+  g.imageSmoothingEnabled = true;
+  g.imageSmoothingQuality = 'high';
+  const k = Math.max(S / w, S / h);
+  g.drawImage(src, (S - w * k) / 2, (S - h * k) / 2, w * k, h * k);
+  return c;
+}
+
+/* ------------------------------------------------------------------ 2. CONVERT */
+async function convertStill(file) {
+  const img = await loadImage(file);
+  const c = squareCanvas(img, img.naturalWidth, img.naturalHeight, OUTPUT_SIZE);
+  const blob = await toBlob(c, 'image/webp', QUALITY);
+  c.width = c.height = 0;                     // free memory
+  if (!blob || blob.type !== 'image/webp') throw new Error('WEBP encoding not supported here');
+  return blob;
+}
+
+/* ------------------------------------------------------------------ 3. ZIP */
+function buildZip(entries, onPct) {
+  const zip = new JSZip();
+  entries.forEach((e) => zip.file(e.name, e.blob, { compression: 'STORE' }));
+  return zip.generateAsync({ type: 'blob', compression: 'STORE', streamFiles: true }, (m) => onPct(m.percent / 100));
+}
+
+/* ------------------------------------------------------------------ UI */
+const el = { drop: $('#drop'), file: $('#file'), queue: $('#queue'), sum: $('#summary'), alert: $('#alert'),
+  name: $('#zipName'), bar: $('#bar'), clear: $('#clear'), zip: $('#zip') };
+let list = [], uid = 0, working = false;
+
+function warn(msg, ms = 5000) {
+  el.alert.textContent = msg; el.alert.hidden = false;
+  clearTimeout(warn.t); warn.t = setTimeout(() => (el.alert.hidden = true), ms);
+}
+const progress = (p) => { el.bar.hidden = p == null; if (p != null) el.bar.firstChild.style.width = Math.round(p * 100) + '%'; };
+
+function setStatus(item, text, isErr) {
+  const st = item.node.querySelector('.st');
+  if (!st) return;
+  st.hidden = false; st.textContent = text; st.classList.toggle('err', !!isErr);
+}
+function clearStatus(item) {
+  const st = item.node.querySelector('.st');
+  if (st) { st.hidden = true; st.textContent = ''; st.classList.remove('err'); }
+}
+
+function refresh() {
+  const total = list.reduce((a, i) => a + i.file.size, 0);
+  el.sum.hidden = !list.length;
+  el.sum.textContent = `${list.length} / ${MAX_FILES} images · ${fmt(total)}`;
+  el.clear.disabled = el.zip.disabled = working || !list.length;
+}
+
+function addFiles(files) {
+  let skipped = 0, over = 0;
+  for (const file of files) {
+    if (!file.type.startsWith('image/')) { skipped++; continue; }
+    if (list.length >= MAX_FILES) { over++; continue; }
+    const item = { id: ++uid, file, url: null, node: document.createElement('div') };
+    item.node.className = 'item';
+    item.node.innerHTML =
+      `<div class="ph">${file.name.replace(/[<>&]/g, '')}</div>` +
+      `<div class="badge">${fmt(file.size)}</div>` +
+      `<div class="st" hidden></div>` +
+      `<button class="x" aria-label="Remove">✕</button>`;
+    item.node.querySelector('.x').onclick = () => !working && removeItem(item);
+    el.queue.appendChild(item.node);
+    list.push(item);
+  }
+  if (skipped) warn(`${skipped} file(s) skipped — images only.`);
+  if (over) warn(`Limit is ${MAX_FILES} images — ${over} not added.`);
+  refresh(); makeThumbs();
+}
+
+function removeItem(item) {
+  list = list.filter((i) => i !== item);
+  if (item.url) URL.revokeObjectURL(item.url);
+  item.node.remove(); refresh();
+}
+
+/* thumbnails run one at a time so big photos never pile up in memory */
+let thumbChain = Promise.resolve();
+function makeThumbs() {
+  thumbChain = thumbChain.then(async () => {
+    for (const item of list.filter((i) => !i.url && !i.thumbTried)) {
+      item.thumbTried = true;
+      try {
+        const img = await loadImage(item.file);
+        const c = squareCanvas(img, img.naturalWidth, img.naturalHeight, THUMB);
+        const b = await toBlob(c, 'image/jpeg', 0.7);
+        if (b && list.includes(item)) {
+          item.url = URL.createObjectURL(b);
+          item.node.querySelector('.ph')?.replaceWith(Object.assign(new Image(), { src: item.url, alt: item.file.name }));
+        }
+      } catch { /* preview not decodable — ZIP still works */ }
+      await tick();
+    }
+  }).catch(() => { });
+  return thumbChain;
+}
+
+/* upload wiring */
+el.file.onchange = (e) => { addFiles(e.target.files); e.target.value = ''; };
+['dragenter', 'dragover'].forEach((t) => el.drop.addEventListener(t, (e) => { e.preventDefault(); el.drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach((t) => el.drop.addEventListener(t, (e) => { e.preventDefault(); el.drop.classList.remove('over'); }));
+el.drop.addEventListener('drop', (e) => !working && addFiles(e.dataTransfer.files));
+el.drop.addEventListener('click', (e) => { if (working) e.preventDefault(); });
+
+el.clear.onclick = () => { if (!working) [...list].forEach(removeItem); };
+
+/* export */
+el.zip.onclick = async () => {
+  if (working || !list.length) return;
+  if (typeof JSZip === 'undefined') return warn('ZIP library failed to load — check your connection.');
+
+  working = true; refresh();
+  await thumbChain;
+
+  const used = new Set(), entries = [];
+  const uniq = (n, ext) => { let s = `${n}.${ext}`, i = 2; while (used.has(s.toLowerCase())) s = `${n}_${i++}.${ext}`; used.add(s.toLowerCase()); return s; };
+  let failed = 0;
+
+  try {
+    for (let i = 0; i < list.length; i++) {
+      const item = list[i];
+      el.zip.textContent = `Converting ${i + 1}/${list.length}…`;
+      progress((i / list.length) * 0.8);
+      setStatus(item, 'Working…');
+
+      try {
+        const blob = await convertStill(item.file);
+        entries.push({ name: uniq(safe(baseName(item.file.name)) || 'image', 'webp'), blob });
+        clearStatus(item);
+      } catch (err) {
+        if (/WEBP encoding/.test(err.message)) throw err;   // browser can't make WEBP at all
+        failed++; setStatus(item, 'Failed', true);
+        console.warn('[skip]', item.file.name, err);
+      }
+
+      await tick();
+    }
+    if (!entries.length) throw new Error('No image could be converted.');
+
+    el.zip.textContent = 'Zipping…';
+    const zip = await buildZip(entries, (p) => progress(0.8 + p * 0.2));
+    Platform.save(zip, (safe(el.name.value) || 'webp_images') + '.zip');
+    progress(1);
+    if (failed) warn(`${failed} image(s) couldn't be converted (too large or unreadable) and were left out.`, 7000);
+  } catch (err) {
+    console.error(err); warn('Could not build the ZIP: ' + err.message);
+  } finally {
+    working = false; el.zip.textContent = 'Download ZIP'; refresh();
+    setTimeout(() => progress(null), 1500);
+  }
+};
+
+refresh();
+})();
+</script>
+</body>
+</html>
