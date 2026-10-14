@@ -1,0 +1,16 @@
+{
+  "background_color": "#ffffff",
+  "dir": "ltr",
+  "display": "fullscreen",
+  "name": "kaizokuamit",
+  "orientation": "any",
+  "scope": "/",
+  "short_name": "amit",
+  "start_url": "/",
+  "theme_color": "#07080c",
+  "id": "AMIT",
+  "lang": "en",
+  "categories": [
+    "design"
+  ]
+}
